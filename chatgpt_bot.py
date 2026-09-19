@@ -12,6 +12,9 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 # مدل رایگان از OpenRouter؛ می‌تونی بعداً عوضش کنی
 # لیست مدل‌های رایگان به ترتیب اولویت؛ اگه یکی کار نکرد، بعدی امتحان می‌شه
 MODELS = [
+    "inclusionai/ling-3.0-flash-vl:free",
+    "inclusionai/ling-3.0-flash-sante:free",
+    "inclusionai/ling-3.0-flash-fin:free",
     "openai/gpt-oss-20b:free",
     "deepseek/deepseek-chat-v3.1:free",
     "qwen/qwen3-coder:free",
