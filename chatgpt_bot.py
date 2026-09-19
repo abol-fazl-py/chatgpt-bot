@@ -10,7 +10,12 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
 # مدل رایگان از OpenRouter؛ می‌تونی بعداً عوضش کنی
-MODEL = "openai/gpt-oss-20b:free"
+# لیست مدل‌های رایگان به ترتیب اولویت؛ اگه یکی کار نکرد، بعدی امتحان می‌شه
+MODELS = [
+    "openai/gpt-oss-20b:free",
+    "deepseek/deepseek-chat-v3.1:free",
+    "qwen/qwen3-coder:free",
+]
 
 # حافظه‌ی مکالمه برای هر کاربر (به‌صورت ساده، در حافظه‌ی برنامه)
 user_histories = {}
@@ -44,30 +49,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    try:
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": MODEL,
-                "messages": history,
-            },
-            timeout=60,
-        )
-        response.raise_for_status()
-        data = response.json()
-        reply = data["choices"][0]["message"]["content"]
+    last_error = None
+    for model in MODELS:
+        try:
+            response = requests.post(
+                url="https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": history,
+                },
+                timeout=60,
+            )
+            response.raise_for_status()
+            data = response.json()
+            reply = data["choices"][0]["message"]["content"]
 
-        # اضافه کردن جواب ربات به تاریخچه
-        user_histories[user_id].append({"role": "assistant", "content": reply})
+            # اضافه کردن جواب ربات به تاریخچه
+            user_histories[user_id].append({"role": "assistant", "content": reply})
 
-        await update.message.reply_text(reply)
+            await update.message.reply_text(reply)
+            return
 
-    except Exception as e:
-        await update.message.reply_text(f"خطا در دریافت پاسخ:\n{e}")
+        except Exception as e:
+            last_error = e
+            continue  # مدل بعدی رو امتحان کن
+
+    await update.message.reply_text(f"خطا در دریافت پاسخ (همه‌ی مدل‌ها امتحان شد):\n{last_error}")
 
 
 def main():
