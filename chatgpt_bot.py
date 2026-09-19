@@ -10,7 +10,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
 # مدل رایگان از OpenRouter؛ می‌تونی بعداً عوضش کنی
-MODEL = "google/gemini-2.0-flash-exp:free"
+MODEL = "openai/gpt-oss-20b:free"
 
 # حافظه‌ی مکالمه برای هر کاربر (به‌صورت ساده، در حافظه‌ی برنامه)
 user_histories = {}
