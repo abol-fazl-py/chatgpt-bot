@@ -2,6 +2,8 @@ import os
 import base64
 import logging
 import requests
+from io import BytesIO
+from urllib.parse import quote
 from ddgs import DDGS
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
@@ -40,6 +42,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "سلام! هر سوالی داری بپرس، جواب می‌دم. 🤖\n"
         "می‌تونی عکس هم برام بفرستی تا توضیحش بدم.\n"
         "برای پیدا کردن اسم یه آهنگ: /search <متن یا توضیح آهنگ>\n"
+        "برای ساخت عکس از روی متن: /image <توضیح عکس>\n"
         "برای پاک کردن حافظه‌ی مکالمه، دستور /reset رو بزن."
     )
 
@@ -121,6 +124,35 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"خطا در پردازش نتایج (همه‌ی مدل‌ها امتحان شد):\n{ai_error}")
 
 
+async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    prompt = " ".join(context.args)
+
+    if not prompt:
+        await update.message.reply_text(
+            "بعد از /image بنویس چه عکسی می‌خوای.\n"
+            "مثال: /image یک گربه فضانورد در حال قدم زدن روی ماه"
+        )
+        return
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
+
+    try:
+        # سرویس رایگان Pollinations.ai برای ساخت عکس از متن (بدون نیاز به API key)
+        encoded_prompt = quote(prompt)
+        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true"
+
+        response = requests.get(image_url, timeout=90)
+        response.raise_for_status()
+
+        image_bytes = BytesIO(response.content)
+        image_bytes.name = "image.jpg"
+
+        await update.message.reply_photo(photo=image_bytes, caption=f"🎨 {prompt}")
+
+    except Exception as e:
+        await update.message.reply_text(f"خطا در ساخت عکس:\n{e}")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_text = update.message.text
@@ -174,6 +206,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("search", search_command))
+    app.add_handler(CommandHandler("image", image_command))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("ربات در حال اجراست...")
@@ -182,3 +215,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
