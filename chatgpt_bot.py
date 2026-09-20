@@ -1,8 +1,8 @@
 import os
-import io
 import base64
 import logging
 import requests
+from ddgs import DDGS
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 
@@ -11,10 +11,7 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
-# مدل رایگان از OpenRouter؛ می‌تونی بعداً عوضش کنی
 # لیست مدل‌های رایگان به ترتیب اولویت؛ اگه یکی کار نکرد، بعدی امتحان می‌شه
-# نکته: مدل‌های رایگان OpenRouter گاهی منقضی/جایگزین می‌شن. اگه همه خطا دادن،
-# باید از سایت openrouter.ai/chat یه مدل رایگان جدید پیدا کنی و اینجا اضافه‌ش کنی.
 MODELS = [
     "inclusionai/ling-3.0-flash-vl:free",
     "inclusionai/ling-3.0-flash-sante:free",
@@ -42,6 +39,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "سلام! هر سوالی داری بپرس، جواب می‌دم. 🤖\n"
         "می‌تونی عکس هم برام بفرستی تا توضیحش بدم.\n"
+        "برای پیدا کردن اسم یه آهنگ: /search <متن یا توضیح آهنگ>\n"
         "برای پاک کردن حافظه‌ی مکالمه، دستور /reset رو بزن."
     )
 
@@ -63,10 +61,7 @@ def call_ai(messages, models_list):
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "model": model,
-                    "messages": messages,
-                },
+                json={"model": model, "messages": messages},
                 timeout=60,
             )
             response.raise_for_status()
@@ -78,6 +73,54 @@ def call_ai(messages, models_list):
     return None, last_error
 
 
+def web_search(query: str, max_results: int = 5):
+    """جستجوی وب رایگان با DuckDuckGo؛ لیستی از نتایج برمی‌گردونه."""
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+        return results, None
+    except Exception as e:
+        return [], e
+
+
+async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = " ".join(context.args)
+
+    if not query:
+        await update.message.reply_text(
+            "بعد از /search بنویس دنبال چی می‌گردی.\n"
+            "مثال: /search اسم آهنگی که این تیکه از متنشه: sen ağlama"
+        )
+        return
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    results, error = web_search(query)
+
+    if error or not results:
+        await update.message.reply_text("چیزی توی جستجوی وب پیدا نشد، دوباره امتحان کن.")
+        return
+
+    search_context = "\n\n".join(
+        f"عنوان: {r.get('title')}\nخلاصه: {r.get('body')}\nلینک: {r.get('href')}"
+        for r in results
+    )
+
+    prompt = (
+        f"کاربر دنبال این چیز می‌گرده: {query}\n\n"
+        f"این نتایج جستجوی وب رو دارم:\n{search_context}\n\n"
+        "بر اساس این نتایج، جواب دقیق و کوتاهی به کاربر بده. "
+        "اگه سوال درباره‌ی یه آهنگ بود، فقط اسم آهنگ، خواننده، و لینک رسمی شنیدنش (یوتیوب/اسپاتیفای) رو بده؛ "
+        "هرگز متن کامل ترانه رو ننویس، فقط اسم و لینک."
+    )
+
+    reply, ai_error = call_ai([{"role": "user", "content": prompt}], MODELS)
+
+    if reply:
+        await update.message.reply_text(reply)
+    else:
+        await update.message.reply_text(f"خطا در پردازش نتایج (همه‌ی مدل‌ها امتحان شد):\n{ai_error}")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_text = update.message.text
@@ -85,14 +128,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_histories:
         user_histories[user_id] = []
 
-    # اضافه کردن پیام کاربر به تاریخچه
     user_histories[user_id].append({"role": "user", "content": user_text})
-
-    # فقط ۱۰ پیام آخر رو نگه می‌داریم تا زیاد سنگین نشه
     history = user_histories[user_id][-10:]
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-
     reply, error = call_ai(history, MODELS)
 
     if reply:
@@ -105,15 +144,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    # بزرگ‌ترین سایز عکس رو بردار (بهترین کیفیت)
     photo = update.message.photo[-1]
     file = await context.bot.get_file(photo.file_id)
-
-    # دانلود عکس به‌صورت بایت و تبدیل به base64
     photo_bytes = await file.download_as_bytearray()
     b64_image = base64.b64encode(photo_bytes).decode("utf-8")
 
-    # اگه کاربر زیر عکس متنی نوشته باشه (caption)، همون رو به‌عنوان سوال استفاده می‌کنیم
     user_caption = update.message.caption or "این عکس رو توضیح بده."
 
     messages = [
@@ -121,10 +156,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "role": "user",
             "content": [
                 {"type": "text", "text": user_caption},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"},
-                },
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}},
             ],
         }
     ]
@@ -141,6 +173,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(CommandHandler("search", search_command))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("ربات در حال اجراست...")
